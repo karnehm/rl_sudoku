@@ -5,6 +5,8 @@ import numpy as np
 import tensorflow as tf
 
 
+NUM_FEATURES = 4
+SUDOKU_SIZE = 4
 NUM_ACTIONS = 4*4*4
 
 
@@ -18,7 +20,7 @@ def weight_variable(shape):
 
 
 def bias_variable(shape):
-    initial = tf.constant(0.1, shape=shape)
+    initial = tf.constant(0.5, shape=shape)
     return tf.Variable(initial)
 
 
@@ -29,7 +31,7 @@ class Agent:
         self.episode_length = 10000
         self.gradient_update_step = 10
         
-        self.env= environment
+        self.env = environment
         self.sess = sess
         self.history = []
 
@@ -39,6 +41,8 @@ class Agent:
 
         self.discount = 0.99
 
+        self.play_mode = False
+
         self.setup_dqn()
 
     def choose_action(self):
@@ -46,7 +50,7 @@ class Agent:
             (min(self.epsilon_time, self.step)/self.epsilon_time) * 
             (self.epsilon_end - self.epsilon_start))
 
-        if random.random() < epsilon:
+        if not self.play_mode and random.random() < epsilon:
             action = random.randrange(self.env.num_actions)
         else:
             action = self.max_q_action.eval(
@@ -101,48 +105,74 @@ class Agent:
         for key in self.b:
             tf.assign(self.target_b[key], self.b[key])
 
-    def train(self, n_iters=1000):
-        for i in range(self.num_episodes):
-            logging.info("Episode %d", i)
-            game_lengths = []
-            game_length = 0
+    def play(self):
+        #import pdb; pdb.set_trace()
+        import environment
+        self.play_mode = True
+        ckpt = tf.train.get_checkpoint_state('.')
+        if ckpt and ckpt.model_checkpoint_path:
+            self.saver.restore(self.sess, ckpt.model_checkpoint_path)
+
             grid = self.env.new_grid()
-            num_victories = 0
-            ep_start = self.step
-            while num_victories == 0:
+            print(environment.unflatten(grid))
+            terminal = False
+            while not terminal:
                 action = self.choose_action()
                 logging.debug("Taking action %d", action)
                 new_grid, reward, terminal = self.act(action)
-                game_length += 1
                 logging.debug("Reward: %d, Terminal %d", reward, terminal)
 
-                if terminal:
-                    new_grid = np.zeros(64)
+                print(environment.unflatten(new_grid))
+                grid = new_grid
+
+    def train(self, n_iters=1000):
+        try:
+            for i in range(self.num_episodes):
+                self.train_episode(i)
+        except KeyboardInterrupt:
+            self.saver.save(self.sess, './model.ckpt')
+
+    def train_episode(self, i):
+        logging.info("Episode %d", i)
+        game_lengths = []
+        game_length = 0
+        grid = self.env.new_grid()
+        num_victories = 0
+        ep_start = self.step
+        while num_victories == 0:
+            action = self.choose_action()
+            logging.debug("Taking action %d", action)
+            new_grid, reward, terminal = self.act(action)
+            game_length += 1
+            logging.debug("Reward: %d, Terminal %d", reward, terminal)
+
+            if terminal:
+                new_grid = np.zeros(64)
                 
-                self.history.append(
-                    (grid.copy(), action, reward, terminal, new_grid))
-                if terminal:
-                    grid = self.env.reset_grid()
-                    game_lengths.append(game_length)
-                    game_length = 0
-                    if reward > 0:
-                        num_victories += 1
-                else:
-                    grid = new_grid
+            self.history.append(
+                (grid.copy(), action, reward, terminal, new_grid))
+            if terminal:
+                grid = self.env.reset_grid()
+                game_lengths.append(game_length)
+                game_length = 0
+                if reward > 0:
+                    num_victories += 1
+            else:
+                grid = new_grid
 
-                self.step += 1
+            self.step += 1
 
-                self.do_q_learning()
-                if self.step % 100 == 0:
-                    self.update_target()
+            self.do_q_learning()
+            if self.step % 100 == 0:
+                self.update_target()
 
-                if self.step % 1000 == 0:
-                    logging.info("Step %s, Average game length %s",
-                        self.step, np.mean(game_lengths))
+            if self.step % 1000 == 0:
+                logging.info("Step %s, Average game length %s",
+                    self.step, np.mean(game_lengths))
 
-            logging.info("Episode length %s", self.step - ep_start)
-            logging.info("Average game length %s", np.mean(game_lengths))
-            self.history = []
+        logging.info("Episode length %s", self.step - ep_start)
+        logging.info("Average game length %s", np.mean(game_lengths))
+        self.history = []
 
     def setup_dqn(self):
         self.w = {}
@@ -151,63 +181,63 @@ class Agent:
         self.target_b = {}
 
         # Input state
-        NUM_FEATURES=4
         self.state = tf.placeholder('float32', [None, 64])
         x = tf.reshape(self.state, [-1,4,16,1])
 
-        self.w['entry'] = weight_variable((1,4,1,NUM_FEATURES))
-        self.b['entry'] = bias_variable((NUM_FEATURES,))
+        self.w['entry'] = weight_variable((1,4,1,SUDOKU_SIZE))
+        self.b['entry'] = bias_variable((SUDOKU_SIZE,))
         h_conv1 = tf.nn.relu(conv2d(x, self.w['entry'], strides=[1,1,4,1]) + self.b['entry'])
 
-        self.target_w['entry'] = weight_variable((1,4,1,NUM_FEATURES))
-        self.target_b['entry'] = bias_variable((NUM_FEATURES,))
+        self.target_w['entry'] = weight_variable((1,4,1,SUDOKU_SIZE))
+        self.target_b['entry'] = bias_variable((SUDOKU_SIZE,))
         target_h_conv1 = tf.nn.relu(
             conv2d(x, self.target_w['entry'], strides=[1,1,4,1]) + self.target_b['entry'])
         
         # Convolution over rows, columns, and boxes
-        self.w['row'] = weight_variable((1,4,NUM_FEATURES,NUM_FEATURES**2))
-        self.b['row'] = bias_variable((NUM_FEATURES**2,))
-        self.w['col'] = weight_variable((4,1,NUM_FEATURES,NUM_FEATURES**2))
-        self.b['col'] = bias_variable((NUM_FEATURES**2,))
-        self.w['box'] = weight_variable((2,2,NUM_FEATURES,NUM_FEATURES**2))
-        self.b['box'] = bias_variable((NUM_FEATURES**2,))
+        self.w['row'] = weight_variable((1,4,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.b['row'] = bias_variable((SUDOKU_SIZE**2,))
+        self.w['col'] = weight_variable((4,1,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.b['col'] = bias_variable((SUDOKU_SIZE**2,))
+        self.w['box'] = weight_variable((2,2,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.b['box'] = bias_variable((SUDOKU_SIZE**2,))
 
         h_row = tf.nn.relu(conv2d(h_conv1, self.w['row'], strides=[1,1,4,1]) + self.b['row'])
         h_col = tf.nn.relu(conv2d(h_conv1, self.w['col'], strides=[1,4,1,1]) + self.b['col'])
         h_box = tf.nn.relu(conv2d(h_conv1, self.w['box'], strides=[1,2,2,1]) + self.b['box'])
 
-        h_row_flat = tf.reshape(h_row, [-1, 4*NUM_FEATURES**2])
-        h_col_flat = tf.reshape(h_col, [-1, 4*NUM_FEATURES**2])
-        h_box_flat = tf.reshape(h_box, [-1, 4*NUM_FEATURES**2])
+        h_row_flat = tf.reshape(h_row, [-1, 4*SUDOKU_SIZE**2])
+        h_col_flat = tf.reshape(h_col, [-1, 4*SUDOKU_SIZE**2])
+        h_box_flat = tf.reshape(h_box, [-1, 4*SUDOKU_SIZE**2])
 
         h_all = tf.concat(1, [h_row_flat, h_col_flat, h_box_flat])
 
-        self.target_w['row'] = weight_variable((1,4,NUM_FEATURES,NUM_FEATURES**2))
-        self.target_b['row'] = bias_variable((NUM_FEATURES**2,))
-        self.target_w['col'] = weight_variable((4,1,NUM_FEATURES,NUM_FEATURES**2))
-        self.target_b['col'] = bias_variable((NUM_FEATURES**2,))
-        self.target_w['box'] = weight_variable((2,2,NUM_FEATURES,NUM_FEATURES**2))
-        self.target_b['box'] = bias_variable((NUM_FEATURES**2,))
+        self.target_w['row'] = weight_variable((1,4,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.target_b['row'] = bias_variable((SUDOKU_SIZE**2,))
+        self.target_w['col'] = weight_variable((4,1,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.target_b['col'] = bias_variable((SUDOKU_SIZE**2,))
+        self.target_w['box'] = weight_variable((2,2,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.target_b['box'] = bias_variable((SUDOKU_SIZE**2,))
 
         target_h_row = tf.nn.relu(conv2d(target_h_conv1, self.w['row'], strides=[1,1,4,1]) + self.b['row'])
         target_h_col = tf.nn.relu(conv2d(target_h_conv1, self.w['col'], strides=[1,4,1,1]) + self.b['col'])
         target_h_box = tf.nn.relu(conv2d(target_h_conv1, self.w['box'], strides=[1,2,2,1]) + self.b['box'])
 
-        target_h_row_flat = tf.reshape(target_h_row, [-1, 4*NUM_FEATURES**2])
-        target_h_col_flat = tf.reshape(target_h_col, [-1, 4*NUM_FEATURES**2])
-        target_h_box_flat = tf.reshape(target_h_box, [-1, 4*NUM_FEATURES**2])
+        target_h_row_flat = tf.reshape(target_h_row, [-1, 4*SUDOKU_SIZE**2])
+        target_h_col_flat = tf.reshape(target_h_col, [-1, 4*SUDOKU_SIZE**2])
+        target_h_box_flat = tf.reshape(target_h_box, [-1, 4*SUDOKU_SIZE**2])
 
         target_h_all = tf.concat(1, [target_h_row_flat, target_h_col_flat, target_h_box_flat])
 
         # Final
-        self.w['final'] = weight_variable([4*3*NUM_FEATURES**2, 64])
+        self.w['final'] = weight_variable([4*3*SUDOKU_SIZE**2, 64])
         self.b['final'] = bias_variable([64])
 
-        self.q = tf.nn.dropout(
-            (tf.matmul(h_all, self.w['final']) + self.b['final']),
-            0.9)
+        self.q = tf.matmul(h_all, self.w['final']) + self.b['final']
+#       self.q = tf.nn.dropout(
+#            (tf.matmul(h_all, self.w['final']) + self.b['final']),
+#            0.9)
         
-        self.target_w['final'] = weight_variable([4*3*NUM_FEATURES**2, 64])
+        self.target_w['final'] = weight_variable([4*3*SUDOKU_SIZE**2, 64])
         self.target_b['final'] = bias_variable([64])
 
         self.target_q = tf.matmul(target_h_all, self.target_w['final']) + self.target_b['final']
@@ -237,6 +267,5 @@ class Agent:
 
         tf.initialize_all_variables().run()
 
-        #self._saver = tf.train.Saver(
-        #    self.weights.values(), max_to_keep=30)
+        self.saver = tf.train.Saver(list(self.w.values()) + list(self.b.values()))
 
