@@ -28,6 +28,17 @@ BASE3 = np.array(
 BASES = [BASE1, BASE2, BASE3]
 
 
+def flatten(grid):
+    mask = (grid.ravel() + 4*np.arange(16) - 1)[(np.where(grid.ravel() != 0))]
+    flat = np.zeros(64)
+    flat[mask] = 1
+    return flat.astype(int)
+
+
+def unflatten(grid):
+    return (grid.reshape((4,4,4)).argmax(axis=2) + 1) * grid.reshape((4,4,4)).max(axis=2).astype(int)
+
+
 def _swap_cols(grid, col1, col2):
     grid[:, col1], grid[:, col2] = grid[:, col2], grid[:, col1].copy()
 

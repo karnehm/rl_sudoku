@@ -1,8 +1,15 @@
+"""
+Agent implementation.
+"""
+
 import logging
 import random
 
 import numpy as np
 import tensorflow as tf
+
+import environment
+import sudoku
 
 
 NUM_FEATURES = 4
@@ -107,22 +114,21 @@ class Agent:
 
     def play(self):
         #import pdb; pdb.set_trace()
-        import environment
         self.play_mode = True
         ckpt = tf.train.get_checkpoint_state('.')
         if ckpt and ckpt.model_checkpoint_path:
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)
 
             grid = self.env.new_grid()
-            print(environment.unflatten(grid))
+            print(sudoku.unflatten(grid))
             terminal = False
             while not terminal:
                 action = self.choose_action()
-                logging.debug("Taking action %d", action)
+                logging.info("Taking action %d", action)
                 new_grid, reward, terminal = self.act(action)
-                logging.debug("Reward: %d, Terminal %d", reward, terminal)
+                logging.info("Reward: %d, Terminal %d", reward, terminal)
 
-                print(environment.unflatten(new_grid))
+                print(sudoku.unflatten(new_grid))
                 grid = new_grid
 
     def train(self, n_iters=1000):
@@ -130,7 +136,9 @@ class Agent:
             for i in range(self.num_episodes):
                 self.train_episode(i)
         except KeyboardInterrupt:
-            self.saver.save(self.sess, './model.ckpt')
+            pass
+
+        self.saver.save(self.sess, './model.ckpt')
 
     def train_episode(self, i):
         logging.info("Episode %d", i)
@@ -181,29 +189,29 @@ class Agent:
         self.target_b = {}
 
         # Input state
-        self.state = tf.placeholder('float32', [None, 64])
-        x = tf.reshape(self.state, [-1,4,16,1])
+        self.state = tf.placeholder('float32', [None, SUDOKU_SIZE**3])
+        x = tf.reshape(self.state, [-1, SUDOKU_SIZE, SUDOKU_SIZE**2, 1])
 
-        self.w['entry'] = weight_variable((1,4,1,SUDOKU_SIZE))
+        self.w['entry'] = weight_variable((1, SUDOKU_SIZE, 1, SUDOKU_SIZE))
         self.b['entry'] = bias_variable((SUDOKU_SIZE,))
-        h_conv1 = tf.nn.relu(conv2d(x, self.w['entry'], strides=[1,1,4,1]) + self.b['entry'])
+        h_conv1 = tf.nn.relu(conv2d(x, self.w['entry'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.b['entry'])
 
-        self.target_w['entry'] = weight_variable((1,4,1,SUDOKU_SIZE))
+        self.target_w['entry'] = weight_variable((1, SUDOKU_SIZE, 1, SUDOKU_SIZE))
         self.target_b['entry'] = bias_variable((SUDOKU_SIZE,))
         target_h_conv1 = tf.nn.relu(
-            conv2d(x, self.target_w['entry'], strides=[1,1,4,1]) + self.target_b['entry'])
+            conv2d(x, self.target_w['entry'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.target_b['entry'])
         
         # Convolution over rows, columns, and boxes
-        self.w['row'] = weight_variable((1,4,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.w['row'] = weight_variable((1, 4, SUDOKU_SIZE, SUDOKU_SIZE**2))
         self.b['row'] = bias_variable((SUDOKU_SIZE**2,))
-        self.w['col'] = weight_variable((4,1,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.w['col'] = weight_variable((4, 1, SUDOKU_SIZE, SUDOKU_SIZE**2))
         self.b['col'] = bias_variable((SUDOKU_SIZE**2,))
-        self.w['box'] = weight_variable((2,2,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.w['box'] = weight_variable((2, 2, SUDOKU_SIZE, SUDOKU_SIZE**2))
         self.b['box'] = bias_variable((SUDOKU_SIZE**2,))
 
-        h_row = tf.nn.relu(conv2d(h_conv1, self.w['row'], strides=[1,1,4,1]) + self.b['row'])
-        h_col = tf.nn.relu(conv2d(h_conv1, self.w['col'], strides=[1,4,1,1]) + self.b['col'])
-        h_box = tf.nn.relu(conv2d(h_conv1, self.w['box'], strides=[1,2,2,1]) + self.b['box'])
+        h_row = tf.nn.relu(conv2d(h_conv1, self.w['row'], strides=[1, 1, 4, 1]) + self.b['row'])
+        h_col = tf.nn.relu(conv2d(h_conv1, self.w['col'], strides=[1, 4, 1, 1]) + self.b['col'])
+        h_box = tf.nn.relu(conv2d(h_conv1, self.w['box'], strides=[1, 2, 2, 1]) + self.b['box'])
 
         h_row_flat = tf.reshape(h_row, [-1, 4*SUDOKU_SIZE**2])
         h_col_flat = tf.reshape(h_col, [-1, 4*SUDOKU_SIZE**2])
@@ -211,16 +219,16 @@ class Agent:
 
         h_all = tf.concat(1, [h_row_flat, h_col_flat, h_box_flat])
 
-        self.target_w['row'] = weight_variable((1,4,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.target_w['row'] = weight_variable((1, 4, SUDOKU_SIZE,SUDOKU_SIZE**2))
         self.target_b['row'] = bias_variable((SUDOKU_SIZE**2,))
-        self.target_w['col'] = weight_variable((4,1,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.target_w['col'] = weight_variable((4, 1, SUDOKU_SIZE,SUDOKU_SIZE**2))
         self.target_b['col'] = bias_variable((SUDOKU_SIZE**2,))
-        self.target_w['box'] = weight_variable((2,2,SUDOKU_SIZE,SUDOKU_SIZE**2))
+        self.target_w['box'] = weight_variable((2, 2, SUDOKU_SIZE,SUDOKU_SIZE**2))
         self.target_b['box'] = bias_variable((SUDOKU_SIZE**2,))
 
-        target_h_row = tf.nn.relu(conv2d(target_h_conv1, self.w['row'], strides=[1,1,4,1]) + self.b['row'])
-        target_h_col = tf.nn.relu(conv2d(target_h_conv1, self.w['col'], strides=[1,4,1,1]) + self.b['col'])
-        target_h_box = tf.nn.relu(conv2d(target_h_conv1, self.w['box'], strides=[1,2,2,1]) + self.b['box'])
+        target_h_row = tf.nn.relu(conv2d(target_h_conv1, self.w['row'], strides=[1, 1, 4, 1]) + self.b['row'])
+        target_h_col = tf.nn.relu(conv2d(target_h_conv1, self.w['col'], strides=[1, 4, 1, 1]) + self.b['col'])
+        target_h_box = tf.nn.relu(conv2d(target_h_conv1, self.w['box'], strides=[1, 2, 2, 1]) + self.b['box'])
 
         target_h_row_flat = tf.reshape(target_h_row, [-1, 4*SUDOKU_SIZE**2])
         target_h_col_flat = tf.reshape(target_h_col, [-1, 4*SUDOKU_SIZE**2])
@@ -268,4 +276,3 @@ class Agent:
         tf.initialize_all_variables().run()
 
         self.saver = tf.train.Saver(list(self.w.values()) + list(self.b.values()))
-
