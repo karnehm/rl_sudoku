@@ -8,7 +8,6 @@ import random
 import numpy as np
 import tensorflow as tf
 
-import environment
 import sudoku
 
 
@@ -43,14 +42,21 @@ class Agent:
         self.history = []
 
         self.epsilon_start = 1.0
-        self.epsilon_end = 0.2
-        self.epsilon_time = 100000
+        self.epsilon_end = 0.1
+        self.epsilon_time = 1e6
 
         self.discount = 0.99
 
         self.play_mode = False
 
         self.setup_dqn()
+        self.restore()
+
+    def restore(self):
+        ckpt = tf.train.get_checkpoint_state('data')
+        if ckpt and ckpt.model_checkpoint_path:
+            self.saver.restore(self.sess, ckpt.model_checkpoint_path)
+            self.restored = True
 
     def choose_action(self):
         epsilon = (self.epsilon_start + 
@@ -66,6 +72,7 @@ class Agent:
         return action
 
     def act(self, action):
+        logging.debug("Taking action %d", action)
         return self.env.act(action)
 
 #    def observe(self):
@@ -76,24 +83,28 @@ class Agent:
 #            self.update_target()
 
     def sample_history(self):
-        np.random.shuffle(self.history)
-        sample = self.history[:32]
+        sample_indices = np.random.randint(0, len(self.history), 32)
+        sample = [self.history[i] for i in sample_indices]
+
         grids = np.vstack([grid for grid,_,_,_,_ in sample])
         actions = np.array([action for _,action,_,_,_ in sample])
         rewards = np.array([reward for _,_,reward,_,_ in sample])
         terminals = np.array([terminal for _,_,_,terminal,_ in sample])
         next_grids = np.vstack([next_grid for _,_,_,_,next_grid in sample])
+
         return grids, actions, rewards, terminals, next_grids
     
     def do_q_learning(self):
         logging.debug("Q-learning phase")
         if len(self.history) < 32: return
-        if len(self.history) > 10000:
-            self.history = self.history[1000:]
-        grid, action, reward, terminal, next_grid = self.sample_history()
-        
-        q_action_next = self.target_max_q.eval({self.state: next_grid})
 
+        if len(self.history) > 50000:
+            sample_indices = np.random.randint(0, len(self.history), 40000)
+            self.history = [self.history[i] for i in sample_indices]
+        grid, action, reward, terminal, next_grid = self.sample_history()
+
+        # Use target network to choose action.
+        q_action_next = self.target_max_q.eval({self.state: next_grid})
         terminal = np.array(terminal) + 0.
         y = reward + (1. - terminal) * self.discount * q_action_next
 
@@ -104,6 +115,7 @@ class Agent:
                 self.action: action,
                 self.state: grid,
             })
+
         logging.debug("Loss is %s", loss)
 
     def update_target(self):
@@ -115,10 +127,7 @@ class Agent:
     def play(self):
         #import pdb; pdb.set_trace()
         self.play_mode = True
-        ckpt = tf.train.get_checkpoint_state('.')
-        if ckpt and ckpt.model_checkpoint_path:
-            self.saver.restore(self.sess, ckpt.model_checkpoint_path)
-
+        if self.restored:
             grid = self.env.new_grid()
             print(sudoku.unflatten(grid))
             terminal = False
@@ -138,7 +147,7 @@ class Agent:
         except KeyboardInterrupt:
             pass
 
-        self.saver.save(self.sess, './model.ckpt')
+        self.saver.save(self.sess, 'data/model.ckpt')
 
     def train_episode(self, i):
         logging.info("Episode %d", i)
@@ -147,18 +156,17 @@ class Agent:
         grid = self.env.new_grid()
         num_victories = 0
         ep_start = self.step
+
         while num_victories == 0:
             action = self.choose_action()
-            logging.debug("Taking action %d", action)
             new_grid, reward, terminal = self.act(action)
+            new_grid = np.zeros(64) if new_grid is None else new_grid
             game_length += 1
             logging.debug("Reward: %d, Terminal %d", reward, terminal)
 
-            if terminal:
-                new_grid = np.zeros(64)
-                
             self.history.append(
                 (grid.copy(), action, reward, terminal, new_grid))
+
             if terminal:
                 grid = self.env.reset_grid()
                 game_lengths.append(game_length)
@@ -177,10 +185,10 @@ class Agent:
             if self.step % 1000 == 0:
                 logging.info("Step %s, Average game length %s",
                     self.step, np.mean(game_lengths))
+                game_lengths = []
 
         logging.info("Episode length %s", self.step - ep_start)
-        logging.info("Average game length %s", np.mean(game_lengths))
-        self.history = []
+        #self.history = []
 
     def setup_dqn(self):
         self.w = {}

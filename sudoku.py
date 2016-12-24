@@ -42,16 +42,20 @@ def unflatten(grid):
 def _swap_cols(grid, col1, col2):
     grid[:, col1], grid[:, col2] = grid[:, col2], grid[:, col1].copy()
 
+
 def _swap_rows(grid, row1, row2):
     grid[row1, :], grid[row2, :] = grid[row2, :], grid[row1, :].copy()
+
 
 def _swap_box_cols(grid):
     old_grid = grid.copy()
     grid[:, [0,1]], grid[:, [2,3]] = old_grid[:, [2,3]], old_grid[:, [0,1]]
 
+
 def _swap_box_rows(grid):
     old_grid = grid.copy()
     grid[[0,1], :], grid[[2,3], :] = old_grid[[2,3], :], old_grid[[0,1], :]
+
 
 def _permute_numbers(grid):
     perm = np.random.permutation([1,2,3,4])
@@ -59,6 +63,7 @@ def _permute_numbers(grid):
     for i in range(grid.shape[0]):
         for j in range(grid.shape[1]):
             grid[i][j] = perm[old_grid[i][j]-1]
+
 
 def permute(grid):
     if random.random() > 0.5: _swap_rows(grid, 0, 1)
@@ -71,6 +76,7 @@ def permute(grid):
 
     return grid
 
+
 def _check_rows(grid):
     for row in grid:
         counts = np.bincount(row)[1:]
@@ -78,8 +84,10 @@ def _check_rows(grid):
             return False
     return True
 
+
 def _check_cols(grid):
     return _check_rows(grid.T)
+
 
 def _check_boxes(grid):
     for i,j in [(0,0), (0,1), (1,0), (1,1)]:
@@ -88,6 +96,7 @@ def _check_boxes(grid):
         if len(counts) > 0 and max(counts) > 1:
             return False
     return True
+
 
 def check_valid(grid):
     return _check_rows(grid) and _check_cols(grid) and _check_boxes(grid)
@@ -127,9 +136,13 @@ def dig(grid):
     return dug_grid
 
 
-def generate_grid():
-    base = BASES[random.randint(0,2)]
-    return dig(base)
+def generate_grid(flat=False):
+    base = BASES[np.random.randint(0,3)]
+    grid = dig(base)
+    if flat:
+        return flatten(grid)
+    else:
+        return grid
 
 
 if __name__ == '__main__':
