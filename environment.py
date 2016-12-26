@@ -44,17 +44,17 @@ class Environment:
             if is_valid:
                 if np.min(new_grid) > 0:
                     # Have solved the grid.
-                    self.current_grid = None
+                    self.current_grid = sudoku.flatten(new_grid)
                     print("\nSudoku solved!\n")
-                    reward = 10
+                    reward = 1 #@@@
                     terminal = 1
                 else:
                     self.current_grid = sudoku.flatten(new_grid)
-                    reward = 1
+                    reward = 0 #@@@
                     terminal = 0
             else:
                 self.current_grid = None
-                reward = -10
+                reward = -1 #@@@
                 terminal = 1
         
         return self.current_grid, reward, terminal
