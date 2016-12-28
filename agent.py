@@ -77,7 +77,7 @@ class Agent:
         if len(self.history) > 50000:
             sample_indices = np.random.randint(0, len(self.history), 40000)
             self.history = [self.history[i] for i in sample_indices]
-        grid, action, reward, terminal, next_grid = self._sample_history
+        grid, action, reward, terminal, next_grid = self._sample_history()
 
         # Use target network to predict expected reward
         q_action_next = self.target_max_q.eval({self.state: next_grid})
