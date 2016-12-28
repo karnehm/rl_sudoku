@@ -113,7 +113,7 @@ class Agent:
 
             if train_mode:
                 self.step += 1
-                new_grid = np.zeros(64) if new_grid is None else new_grid
+                new_grid = np.zeros(SUDOKU_SIZE**3) if new_grid is None else new_grid
                 self.history.append(
                     (grid.copy(), action, reward, terminal, new_grid))
 
@@ -145,7 +145,7 @@ class Agent:
                 game_successes.append(success)
                 game_lengths.append(game_length)
 
-                self.do_q_learning()
+                self._do_q_learning()
 
                 if i % 100 == 0:
                     summary_successes.append(np.sum(game_successes))
@@ -166,8 +166,10 @@ class Agent:
         np.savetxt('data/lengths.txt', summary_lengths)
 
     def _setup_dqn(self):
-        SQUARE_SIDE = math.sqrt(SUDOKU_SIZE)
-        CONV_WINDOW = SUDOKU_SIZE
+        SQUARE_SIDE = int(math.sqrt(SUDOKU_SIZE))
+        CONV_WINDOWS = SUDOKU_SIZE
+        NUM_ACTIONS = SUDOKU_SIZE**3
+
         def conv2d(x, W, strides=[1, 1, 1, 1]):
             return tf.nn.conv2d(x, W, strides=strides, padding='VALID')
 
@@ -189,60 +191,60 @@ class Agent:
         x = tf.reshape(self.state, [-1, SUDOKU_SIZE, SUDOKU_SIZE**2, 1])
 
         # Convolution over one-hot encoding of individual grid entries
-        self.w['entry'] = weight_variable((1, SUDOKU_SIZE, 1, SUDOKU_SIZE))
-        self.b['entry'] = bias_variable((SUDOKU_SIZE,))
+        self.w['entry'] = weight_variable((1, SUDOKU_SIZE, 1, CONV_WINDOWS))
+        self.b['entry'] = bias_variable((CONV_WINDOWS,))
         h_conv1 = tf.nn.relu(conv2d(x, self.w['entry'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.b['entry'])
 
-        self.target_w['entry'] = weight_variable((1, SUDOKU_SIZE, 1, SUDOKU_SIZE))
-        self.target_b['entry'] = bias_variable((SUDOKU_SIZE,))
+        self.target_w['entry'] = weight_variable((1, SUDOKU_SIZE, 1, CONV_WINDOWS))
+        self.target_b['entry'] = bias_variable((CONV_WINDOWS,))
         target_h_conv1 = tf.nn.relu(
             conv2d(x, self.target_w['entry'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.target_b['entry'])
         
         # Convolution over rows, columns, and boxes
-        self.w['row'] = weight_variable((1, 4, SUDOKU_SIZE, SUDOKU_SIZE**2))
-        self.b['row'] = bias_variable((SUDOKU_SIZE**2,))
-        self.w['col'] = weight_variable((4, 1, SUDOKU_SIZE, SUDOKU_SIZE**2))
-        self.b['col'] = bias_variable((SUDOKU_SIZE**2,))
-        self.w['box'] = weight_variable((2, 2, SUDOKU_SIZE, SUDOKU_SIZE**2))
-        self.b['box'] = bias_variable((SUDOKU_SIZE**2,))
+        self.w['row'] = weight_variable((1, SUDOKU_SIZE, CONV_WINDOWS, CONV_WINDOWS**2))
+        self.b['row'] = bias_variable((CONV_WINDOWS**2,))
+        self.w['col'] = weight_variable((SUDOKU_SIZE, 1, CONV_WINDOWS, CONV_WINDOWS**2))
+        self.b['col'] = bias_variable((CONV_WINDOWS**2,))
+        self.w['box'] = weight_variable((SQUARE_SIDE, SQUARE_SIDE, CONV_WINDOWS, CONV_WINDOWS**2))
+        self.b['box'] = bias_variable((CONV_WINDOWS**2,))
 
-        h_row = tf.nn.relu(conv2d(h_conv1, self.w['row'], strides=[1, 1, 4, 1]) + self.b['row'])
-        h_col = tf.nn.relu(conv2d(h_conv1, self.w['col'], strides=[1, 4, 1, 1]) + self.b['col'])
-        h_box = tf.nn.relu(conv2d(h_conv1, self.w['box'], strides=[1, 2, 2, 1]) + self.b['box'])
+        h_row = tf.nn.relu(conv2d(h_conv1, self.w['row'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.b['row'])
+        h_col = tf.nn.relu(conv2d(h_conv1, self.w['col'], strides=[1, SUDOKU_SIZE, 1, 1]) + self.b['col'])
+        h_box = tf.nn.relu(conv2d(h_conv1, self.w['box'], strides=[1, SQUARE_SIDE, SQUARE_SIDE, 1]) + self.b['box'])
 
-        h_row_flat = tf.reshape(h_row, [-1, 4*SUDOKU_SIZE**2])
-        h_col_flat = tf.reshape(h_col, [-1, 4*SUDOKU_SIZE**2])
-        h_box_flat = tf.reshape(h_box, [-1, 4*SUDOKU_SIZE**2])
+        h_row_flat = tf.reshape(h_row, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
+        h_col_flat = tf.reshape(h_col, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
+        h_box_flat = tf.reshape(h_box, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
 
         h_all = tf.concat(1, [h_row_flat, h_col_flat, h_box_flat])
 
-        self.target_w['row'] = weight_variable((1, 4, SUDOKU_SIZE,SUDOKU_SIZE**2))
-        self.target_b['row'] = bias_variable((SUDOKU_SIZE**2,))
-        self.target_w['col'] = weight_variable((4, 1, SUDOKU_SIZE,SUDOKU_SIZE**2))
-        self.target_b['col'] = bias_variable((SUDOKU_SIZE**2,))
-        self.target_w['box'] = weight_variable((2, 2, SUDOKU_SIZE,SUDOKU_SIZE**2))
-        self.target_b['box'] = bias_variable((SUDOKU_SIZE**2,))
+        self.target_w['row'] = weight_variable((1, SUDOKU_SIZE, CONV_WINDOWS, CONV_WINDOWS**2))
+        self.target_b['row'] = bias_variable((CONV_WINDOWS**2,))
+        self.target_w['col'] = weight_variable((SUDOKU_SIZE, 1, CONV_WINDOWS, CONV_WINDOWS**2))
+        self.target_b['col'] = bias_variable((CONV_WINDOWS**2,))
+        self.target_w['box'] = weight_variable((SQUARE_SIDE, SQUARE_SIDE, CONV_WINDOWS, CONV_WINDOWS**2))
+        self.target_b['box'] = bias_variable((CONV_WINDOWS**2,))
 
         target_h_row = tf.nn.relu(
-            conv2d(target_h_conv1, self.w['row'], strides=[1, 1, 4, 1]) + self.b['row'])
+            conv2d(target_h_conv1, self.w['row'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.b['row'])
         target_h_col = tf.nn.relu(
-            conv2d(target_h_conv1, self.w['col'], strides=[1, 4, 1, 1]) + self.b['col'])
+            conv2d(target_h_conv1, self.w['col'], strides=[1, SUDOKU_SIZE, 1, 1]) + self.b['col'])
         target_h_box = tf.nn.relu(
-            conv2d(target_h_conv1, self.w['box'], strides=[1, 2, 2, 1]) + self.b['box'])
+            conv2d(target_h_conv1, self.w['box'], strides=[1, SQUARE_SIDE, SQUARE_SIDE, 1]) + self.b['box'])
 
-        target_h_row_flat = tf.reshape(target_h_row, [-1, 4*SUDOKU_SIZE**2])
-        target_h_col_flat = tf.reshape(target_h_col, [-1, 4*SUDOKU_SIZE**2])
-        target_h_box_flat = tf.reshape(target_h_box, [-1, 4*SUDOKU_SIZE**2])
+        target_h_row_flat = tf.reshape(target_h_row, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
+        target_h_col_flat = tf.reshape(target_h_col, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
+        target_h_box_flat = tf.reshape(target_h_box, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
 
         target_h_all = tf.concat(1, [target_h_row_flat, target_h_col_flat, target_h_box_flat])
 
         # Final
-        self.w['final'] = weight_variable([4*3*SUDOKU_SIZE**2, 64])
-        self.b['final'] = bias_variable([64])
+        self.w['final'] = weight_variable([3 * SUDOKU_SIZE * CONV_WINDOWS**2, NUM_ACTIONS])
+        self.b['final'] = bias_variable([NUM_ACTIONS])
         self.q = tf.matmul(h_all, self.w['final']) + self.b['final']
 
-        self.target_w['final'] = weight_variable([4*3*SUDOKU_SIZE**2, 64])
-        self.target_b['final'] = bias_variable([64])
+        self.target_w['final'] = weight_variable([3 * SUDOKU_SIZE * CONV_WINDOWS**2, NUM_ACTIONS])
+        self.target_b['final'] = bias_variable([NUM_ACTIONS])
         self.target_q = tf.matmul(target_h_all, self.target_w['final']) + self.target_b['final']
         
         # Calculate loss
