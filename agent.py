@@ -11,24 +11,27 @@ import tensorflow as tf
 
 import sudoku
 
-
-NUM_FEATURES = 4
-SUDOKU_SIZE = 4
-NUM_ACTIONS = 4*4*4
+SUDOKU_SIZE = 9
 
 
 class Agent:
     def __init__(self, env, sess):
+        """
+        Agent object, which learns to solve sudoku grids via Deep Q-learning.
+
+        :param env: Environment for Agent to interact with
+        :param sess: TensorFlow session
+        """
         self.step = 0
-        self.num_episodes = int(1e6)
-        
+        self.num_episodes = int(1e5)
+
         self.env = env
         self.sess = sess
         self.history = []
 
         self.epsilon_start = 1.0
         self.epsilon_end = 0.05
-        self.epsilon_time = 1e5
+        self.epsilon_time = 0.3 * self.num_episodes
 
         self.discount = 0.99
 
@@ -38,9 +41,9 @@ class Agent:
         self._restore()
 
     def choose_action(self):
-        epsilon = (self.epsilon_start + 
-            (min(self.epsilon_time, self.step)/self.epsilon_time) * 
-            (self.epsilon_end - self.epsilon_start))
+        epsilon = (self.epsilon_start +
+                   (min(self.epsilon_time, self.step) / self.epsilon_time) *
+                   (self.epsilon_end - self.epsilon_start))
 
         if not self.play_mode and random.random() < epsilon:
             action = random.randrange(self.env.num_actions)
@@ -58,22 +61,23 @@ class Agent:
         sample_indices = np.random.randint(0, len(self.history), 32)
         sample = [self.history[i] for i in sample_indices]
 
-        grids = np.vstack([grid for grid,_,_,_,_ in sample])
-        actions = np.array([action for _,action,_,_,_ in sample])
-        rewards = np.array([reward for _,_,reward,_,_ in sample])
-        terminals = np.array([terminal for _,_,_,terminal,_ in sample])
-        next_grids = np.vstack([next_grid for _,_,_,_,next_grid in sample])
+        grids = np.vstack([grid for grid, _,  _, _, _ in sample])
+        actions = np.array([action for _, action, _, _, _ in sample])
+        rewards = np.array([reward for _, _, reward, _, _ in sample])
+        terminals = np.array([terminal for _, _, _, terminal, _ in sample])
+        next_grids = np.vstack([next_grid for _, _, _, _, next_grid in sample])
 
         return grids, actions, rewards, terminals, next_grids
 
     def _do_q_learning(self):
         logging.debug("Q-learning phase")
-        if len(self.history) < 32: return
+        if len(self.history) < 32:
+            return
 
         if len(self.history) > 50000:
             sample_indices = np.random.randint(0, len(self.history), 40000)
             self.history = [self.history[i] for i in sample_indices]
-        grid, action, reward, terminal, next_grid = self._sample_history()
+        grid, action, reward, terminal, next_grid = self._sample_history
 
         # Use target network to predict expected reward
         q_action_next = self.target_max_q.eval({self.state: next_grid})
@@ -90,50 +94,69 @@ class Agent:
 
         logging.debug("Loss is %s", loss)
 
-    def update_target(self):
+    def _update_target(self):
         for key in self.w:
             tf.assign(self.target_w[key], self.w[key])
         for key in self.b:
             tf.assign(self.target_b[key], self.b[key])
 
-    def _play_once(self, train_mode=True):
-        # import pdb; pdb.set_trace()
-
+    def _play_once(self, train_mode=True, display=False):
         grid = self.env.new_grid()
-        #print(sudoku.unflatten(grid))
+        if display:
+            print(sudoku.unflatten(grid))
+
         terminal = False
         game_length = 0
         while not terminal:
             action = self.choose_action()
-            #logging.info("Taking action %d", action)
             new_grid, reward, terminal = self.act(action)
-
-            #logging.info("Reward: %d, Terminal %d", reward, terminal)
-            #print(sudoku.unflatten(new_grid))
 
             if train_mode:
                 self.step += 1
-                new_grid = np.zeros(SUDOKU_SIZE**3) if new_grid is None else new_grid
+                new_grid = np.zeros(SUDOKU_SIZE ** 3) if new_grid is None else new_grid
                 self.history.append(
                     (grid.copy(), action, reward, terminal, new_grid))
 
                 self._do_q_learning()
                 if self.step % 100 == 0:
-                    self.update_target()
+                    self._update_target()
+
+            if display:
+                print("Taking action {}... Reward: {}, Terminal {}".format(
+                    action, reward, terminal))
+                print(sudoku.unflatten(new_grid))
 
             game_length += 1
             grid = new_grid
 
         return int(reward > 0), game_length
 
-    def play(self, n_games=1):
+    def play(self, num_games=1, display=False):
+        """
+        Play a number of sudoku grids according to the currently-learnt policy.
+
+        :param num_games: number fof sudoku grids to attempt to solve
+        :param display: whether the individual moves hould be printed
+        :return: None
+        """
         self.play_mode = True
+        num_successes = 0
+        total_length = 0
         if self.restored:
-            for i in range(n_games):
-                success, game_length = self._play_once(train_mode=False)
-                print((success, game_length))
+            for _ in range(num_games):
+                success, game_length = self._play_once(train_mode=False, display=display)
+                num_successes += success
+                total_length += game_length
+
+            print("Played {} games. Successes: {}, average game length: {}".format(
+                num_games, num_successes, total_length / num_games))
 
     def train(self):
+        """
+        Train the Agent via Deep Q-learning, and store learnt weights.
+
+        :return: None
+        """
         try:
             game_successes = []
             game_lengths = []
@@ -145,18 +168,13 @@ class Agent:
                 game_successes.append(success)
                 game_lengths.append(game_length)
 
-                self._do_q_learning()
-
                 if i % 100 == 0:
                     summary_successes.append(np.sum(game_successes))
                     summary_lengths.append(np.mean(game_lengths))
-                    game_rewards = []
+                    game_successes = []
                     game_lengths = []
                     logging.info("Game: %s, average length: %s, number of successes: %s",
                                  i, summary_lengths[-1], summary_successes[-1])
-
-                if self.step % 100 == 0:
-                    self.update_target()
 
         except KeyboardInterrupt:
             pass
@@ -168,7 +186,7 @@ class Agent:
     def _setup_dqn(self):
         SQUARE_SIDE = int(math.sqrt(SUDOKU_SIZE))
         CONV_WINDOWS = SUDOKU_SIZE
-        NUM_ACTIONS = SUDOKU_SIZE**3
+        NUM_ACTIONS = SUDOKU_SIZE ** 3
 
         def conv2d(x, W, strides=[1, 1, 1, 1]):
             return tf.nn.conv2d(x, W, strides=strides, padding='VALID')
@@ -187,8 +205,8 @@ class Agent:
         self.target_b = {}
 
         # Input state
-        self.state = tf.placeholder('float32', [None, SUDOKU_SIZE**3])
-        x = tf.reshape(self.state, [-1, SUDOKU_SIZE, SUDOKU_SIZE**2, 1])
+        self.state = tf.placeholder('float32', [None, SUDOKU_SIZE ** 3])
+        x = tf.reshape(self.state, [-1, SUDOKU_SIZE, SUDOKU_SIZE ** 2, 1])
 
         # Convolution over one-hot encoding of individual grid entries
         self.w['entry'] = weight_variable((1, SUDOKU_SIZE, 1, CONV_WINDOWS))
@@ -199,31 +217,30 @@ class Agent:
         self.target_b['entry'] = bias_variable((CONV_WINDOWS,))
         target_h_conv1 = tf.nn.relu(
             conv2d(x, self.target_w['entry'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.target_b['entry'])
-        
+
         # Convolution over rows, columns, and boxes
-        self.w['row'] = weight_variable((1, SUDOKU_SIZE, CONV_WINDOWS, CONV_WINDOWS**2))
-        self.b['row'] = bias_variable((CONV_WINDOWS**2,))
-        self.w['col'] = weight_variable((SUDOKU_SIZE, 1, CONV_WINDOWS, CONV_WINDOWS**2))
-        self.b['col'] = bias_variable((CONV_WINDOWS**2,))
-        self.w['box'] = weight_variable((SQUARE_SIDE, SQUARE_SIDE, CONV_WINDOWS, CONV_WINDOWS**2))
-        self.b['box'] = bias_variable((CONV_WINDOWS**2,))
+        self.w['row'] = weight_variable((1, SUDOKU_SIZE, CONV_WINDOWS, CONV_WINDOWS ** 2))
+        self.b['row'] = bias_variable((CONV_WINDOWS ** 2,))
+        self.w['col'] = weight_variable((SUDOKU_SIZE, 1, CONV_WINDOWS, CONV_WINDOWS ** 2))
+        self.b['col'] = bias_variable((CONV_WINDOWS ** 2,))
+        self.w['box'] = weight_variable((SQUARE_SIDE, SQUARE_SIDE, CONV_WINDOWS, CONV_WINDOWS ** 2))
+        self.b['box'] = bias_variable((CONV_WINDOWS ** 2,))
 
         h_row = tf.nn.relu(conv2d(h_conv1, self.w['row'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.b['row'])
         h_col = tf.nn.relu(conv2d(h_conv1, self.w['col'], strides=[1, SUDOKU_SIZE, 1, 1]) + self.b['col'])
         h_box = tf.nn.relu(conv2d(h_conv1, self.w['box'], strides=[1, SQUARE_SIDE, SQUARE_SIDE, 1]) + self.b['box'])
 
-        h_row_flat = tf.reshape(h_row, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
-        h_col_flat = tf.reshape(h_col, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
-        h_box_flat = tf.reshape(h_box, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
-
+        h_row_flat = tf.reshape(h_row, [-1, SUDOKU_SIZE * CONV_WINDOWS ** 2])
+        h_col_flat = tf.reshape(h_col, [-1, SUDOKU_SIZE * CONV_WINDOWS ** 2])
+        h_box_flat = tf.reshape(h_box, [-1, SUDOKU_SIZE * CONV_WINDOWS ** 2])
         h_all = tf.concat(1, [h_row_flat, h_col_flat, h_box_flat])
 
-        self.target_w['row'] = weight_variable((1, SUDOKU_SIZE, CONV_WINDOWS, CONV_WINDOWS**2))
-        self.target_b['row'] = bias_variable((CONV_WINDOWS**2,))
-        self.target_w['col'] = weight_variable((SUDOKU_SIZE, 1, CONV_WINDOWS, CONV_WINDOWS**2))
-        self.target_b['col'] = bias_variable((CONV_WINDOWS**2,))
-        self.target_w['box'] = weight_variable((SQUARE_SIDE, SQUARE_SIDE, CONV_WINDOWS, CONV_WINDOWS**2))
-        self.target_b['box'] = bias_variable((CONV_WINDOWS**2,))
+        self.target_w['row'] = weight_variable((1, SUDOKU_SIZE, CONV_WINDOWS, CONV_WINDOWS ** 2))
+        self.target_b['row'] = bias_variable((CONV_WINDOWS ** 2,))
+        self.target_w['col'] = weight_variable((SUDOKU_SIZE, 1, CONV_WINDOWS, CONV_WINDOWS ** 2))
+        self.target_b['col'] = bias_variable((CONV_WINDOWS ** 2,))
+        self.target_w['box'] = weight_variable((SQUARE_SIDE, SQUARE_SIDE, CONV_WINDOWS, CONV_WINDOWS ** 2))
+        self.target_b['box'] = bias_variable((CONV_WINDOWS ** 2,))
 
         target_h_row = tf.nn.relu(
             conv2d(target_h_conv1, self.w['row'], strides=[1, 1, SUDOKU_SIZE, 1]) + self.b['row'])
@@ -232,26 +249,25 @@ class Agent:
         target_h_box = tf.nn.relu(
             conv2d(target_h_conv1, self.w['box'], strides=[1, SQUARE_SIDE, SQUARE_SIDE, 1]) + self.b['box'])
 
-        target_h_row_flat = tf.reshape(target_h_row, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
-        target_h_col_flat = tf.reshape(target_h_col, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
-        target_h_box_flat = tf.reshape(target_h_box, [-1, SUDOKU_SIZE * CONV_WINDOWS**2])
-
+        target_h_row_flat = tf.reshape(target_h_row, [-1, SUDOKU_SIZE * CONV_WINDOWS ** 2])
+        target_h_col_flat = tf.reshape(target_h_col, [-1, SUDOKU_SIZE * CONV_WINDOWS ** 2])
+        target_h_box_flat = tf.reshape(target_h_box, [-1, SUDOKU_SIZE * CONV_WINDOWS ** 2])
         target_h_all = tf.concat(1, [target_h_row_flat, target_h_col_flat, target_h_box_flat])
 
-        # Final
-        self.w['final'] = weight_variable([3 * SUDOKU_SIZE * CONV_WINDOWS**2, NUM_ACTIONS])
+        # Final, fully-connected layer
+        self.w['final'] = weight_variable([3 * SUDOKU_SIZE * CONV_WINDOWS ** 2, NUM_ACTIONS])
         self.b['final'] = bias_variable([NUM_ACTIONS])
         self.q = tf.matmul(h_all, self.w['final']) + self.b['final']
 
-        self.target_w['final'] = weight_variable([3 * SUDOKU_SIZE * CONV_WINDOWS**2, NUM_ACTIONS])
+        self.target_w['final'] = weight_variable([3 * SUDOKU_SIZE * CONV_WINDOWS ** 2, NUM_ACTIONS])
         self.target_b['final'] = bias_variable([NUM_ACTIONS])
         self.target_q = tf.matmul(target_h_all, self.target_w['final']) + self.target_b['final']
-        
+
         # Calculate loss
         self.max_q_action = tf.argmax(self.q, dimension=1)
-        #self.max_q = tf.reduce_max(self.q, 1)
-        
-        #self.target_max_q_action = tf.argmax(self.target_q, dimension=1)
+        # self.max_q = tf.reduce_max(self.q, 1)
+
+        # self.target_max_q_action = tf.argmax(self.target_q, dimension=1)
         self.target_max_q = tf.reduce_max(self.target_q, 1)
 
         self.y = tf.placeholder('float32', [None], name='y')
@@ -263,10 +279,11 @@ class Agent:
 
         self.loss = tf.reduce_mean(tf.square(self.y - q_with_action), name='loss')
 
+        # Update weights
         global_step = tf.Variable(0, name='global_step', trainable=False)
         self.optim = tf.train.RMSPropOptimizer(
             learning_rate=0.001, momentum=0.95, epsilon=0.01).minimize(
-                self.loss, global_step=global_step)
+            self.loss, global_step=global_step)
 
         tf.initialize_all_variables().run()
 

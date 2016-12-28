@@ -1,11 +1,19 @@
 """
-Some terrible implementations of sudoku generation code.
+Some terribly hacky implementations of sudoku generation code.
 """
 
 import random
 
 import numpy as np
 
+import sys
+sys.path.append('/usr/local/lib/python2.7/dist-packages')
+import sudoku_maker
+
+
+##############################################################################
+# 2x2 sudoku stuff
+##############################################################################
 
 BASE1 = np.array(
     [[1,2,3,4],
@@ -27,16 +35,22 @@ BASE3 = np.array(
 
 BASES = [BASE1, BASE2, BASE3]
 
+##############################################################################
+
+
+SUDOKU_SIZE = 9
+
 
 def flatten(grid):
-    mask = (grid.ravel() + 4*np.arange(16) - 1)[(np.where(grid.ravel() != 0))]
-    flat = np.zeros(64)
+    mask = (grid.ravel() + SUDOKU_SIZE * np.arange(SUDOKU_SIZE**2) - 1)[(np.where(grid.ravel() != 0))]
+    flat = np.zeros(SUDOKU_SIZE**3)
     flat[mask] = 1
     return flat.astype(int)
 
 
 def unflatten(grid):
-    return (grid.reshape((4,4,4)).argmax(axis=2) + 1) * grid.reshape((4,4,4)).max(axis=2).astype(int)
+    return (grid.reshape((SUDOKU_SIZE, SUDOKU_SIZE, SUDOKU_SIZE)).argmax(axis=2) + 1) * \
+            grid.reshape((SUDOKU_SIZE, SUDOKU_SIZE, SUDOKU_SIZE)).max(axis=2).astype(int)
 
 
 def _swap_cols(grid, col1, col2):
@@ -58,7 +72,7 @@ def _swap_box_rows(grid):
 
 
 def _permute_numbers(grid):
-    perm = np.random.permutation([1,2,3,4])
+    perm = np.random.permutation(np.arange(1, SUDOKU_SIZE + 1))
     old_grid = grid.copy()
     for i in range(grid.shape[0]):
         for j in range(grid.shape[1]):
@@ -111,7 +125,7 @@ def unique_solution(grid):
             return num_solutions + 1
         else:
             gap = (gaps[0][0], gaps[1][0])
-            for added_entry in [1,2,3,4]:
+            for added_entry in range(1, SUDOKU_SIZE + 1):
                 new_grid = grid.copy()
                 new_grid[gap] = added_entry
                 if check_valid(new_grid):
@@ -137,8 +151,16 @@ def dig(grid):
 
 
 def generate_grid(flat=False):
-    base = BASES[np.random.randint(0,3)]
-    grid = dig(base)
+    if SUDOKU_SIZE == 4:
+        base = BASES[np.random.randint(0,3)]
+        grid = dig(base)
+    elif SUDOKU_SIZE == 9:
+        grid = np.array(sudoku_maker.make())
+        for _ in range(50):
+            i = np.random.choice(np.arange(SUDOKU_SIZE))
+            j = np.random.choice(np.arange(SUDOKU_SIZE))
+            grid[i][j] = 0
+
     if flat:
         return flatten(grid)
     else:
